@@ -1,0 +1,330 @@
+---
+title: "PL"
+output: pdf_document
+date: "2024-02-22"
+---
+
+##### Database Used: English Premier League 2021-22 Match Data
+
+##### from: https://data.world/evangower/english-premier-league-2021-22-match-data
+
+```{r}
+# Import necessary libraries
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+```
+
+```{r}
+# Read data from "soccer21-22.csv" file.
+premData <- read.csv("soccer21-22.csv")
+head(premData)
+```
+The data set has 22 columns consisting of both numerical and categorical data.  
+The legend for the table headers are as follows:   
+FTHG,FTAG,FTR,HTHG,HTAG,HTR,Referee,HS,AS,HST,AST,HF,AF,HC,AC,HY,AY,HR,AR  
+Full Time Home Goals  
+Full Time Away Goals  
+Full Time Home Goals  
+Full Time Away Goals  
+Full Time Result  
+Half Time Home Goals  
+Half Time Away Goals  
+Half Time Home Goals  
+Half Time Away Goals  
+Half Time Result  
+Referee  
+Home Shots  
+Away Shots  
+Home Fouls  
+Away Fouls  
+Home Clearences  
+Away Clearences  
+Home Yellow Cards  
+Away Yellow Cards  
+Home Red Cards  
+Away Red Cards  
+
+## Dataset Preparation
+
+```{r}
+# Get the Team Names and convert it into a dataframe. This will be useful later
+premTeams = c(unique(premData$HomeTeam))
+premTeams <- data.frame(Team = premTeams)
+# Convert the date into date datatype
+premData$Date <- as.Date(premData$Date, format = "%d/%m/%Y")
+# Get the month from the date by using Lubridate.
+premData$month <- month(premData$Date)
+# Convert month to an ordered list
+premData$month <- month(premData$month, label = TRUE)
+head(premData)
+```
+
+## General Analysis of the League
+
+```{r}
+matchesPlayed <- nrow(premData)
+cat("Number of matches played:",matchesPlayed,"  ")
+matchdays <- length(unique(premData$Date))
+cat("Number of unique Matchdays:",matchdays,"  ")
+numberReferees <- length(unique(premData$Referee))
+cat("Number of referees:",numberReferees,"  ")
+```
+380 matches were played in the English Premier League across the year on 123 unique days with a total of 22 different referees being in charge of the matches over the season.
+
+### Premier League Scheduling
+
+The scheduling of the Premier League is a very challenging task as various teams playing multiple tournaments means that the games cannot be evenly spread out throughout the year.
+```{r}
+# Plot the scheduling of the premier league, i.e. the number of  matches played my month.
+ggplot(premData, aes(x = month)) +
+  geom_bar(fill = "blue", alpha = 0.7) +
+  labs(title = "Matches Played per Month", x = "Month", y = "Matches Played") +
+  theme_minimal()
+```
+August and September were the most relaxed months for footballers with all teams combined played just 30 matches.  
+December saw the most football action with 52 games being played throughout the month, followed by April when 50 matches were played.    
+And these are just the matches in the English Premier League, most teams are involved in multiple competitions that go on simultaneously!  
+There is no football over the months of June and July.
+
+### Team Discipline
+```{r}
+# Calculate total yellow cards and red cards for each team
+yellow_cards_home <- premData %>%
+  group_by(Team = HomeTeam) %>%
+  summarise(TotalYellowCards = sum(HY),
+            TotalRedCards = sum(HR))
+
+yellow_cards_away <- premData %>%
+  group_by(Team = AwayTeam) %>%
+  summarise(TotalYellowCards = sum(AY),
+            TotalRedCards = sum(AR))
+
+# Combine the yellow cards at home and away for each team
+yellow_cards <- full_join(yellow_cards_home, yellow_cards_away, by = "Team", suffix = c("_Home", "_Away"))
+
+# Calculate the total yellow cards and red cards for each team
+yellow_cards$TotalYellowCards <- yellow_cards$TotalYellowCards_Home + yellow_cards$TotalYellowCards_Away
+yellow_cards$TotalRedCards <- yellow_cards$TotalRedCards_Home + yellow_cards$TotalRedCards_Away
+
+# Merge the total yellow cards and red cards columns into the premTeams data frame
+premTeams <- merge(premTeams, yellow_cards[, c("Team", "TotalYellowCards", "TotalRedCards")], by = "Team", all.x = TRUE)
+
+# If there are teams that didn't receive any cards, replace NAs with 0
+premTeams$TotalYellowCards[is.na(premTeams$TotalYellowCards)] <- 0
+premTeams$TotalRedCards[is.na(premTeams$TotalRedCards)] <- 0
+
+premTeams$TotalCards <- premTeams$TotalYellowCards+premTeams$TotalRedCards
+
+mostDisciplinedTeam <- premTeams[which.min(premTeams$TotalCards), ]
+mostIllDisciplinedTeam <- premTeams[which.max(premTeams$TotalCards), ]
+cat("Not all fouls are given a yellow or a red card. Serious fouls that warrant a card are called bookable offences.  ")
+cat("The most disciplined team in the Premier league in the 2021-22 season were",mostDisciplinedTeam$Team,". They made the least number of bookable offences.  ")
+cat("The most ill disciplined team in the Premier league in the 2021-22 season were", mostIllDisciplinedTeam$Team,". They made the most number of bookable offences.")
+```
+
+### Referee Bookings Analysis
+```{r}
+# Calculate total yellow cards and red cards given out by each referee
+referee_data <- premData %>%
+  group_by(Referee) %>%
+  summarise(TotalYellowCards = sum(HY) + sum(AY),
+            TotalRedCards = sum(HR) + sum(AR),
+            MatchesOfficiated = n())
+# Calculate total cards given by a referee i.e. Red Cards + Yellow Cards
+referee_data$TotalCards <- referee_data$TotalYellowCards + referee_data$TotalRedCards
+
+# Convert it into a data frame called refereeData
+refereeData <- as.data.frame(referee_data)
+
+# If there are referees who didn't give any cards, replace NAs with 0
+refereeData$TotalYellowCards[is.na(refereeData$TotalYellowCards)] <- 0
+refereeData$TotalRedCards[is.na(refereeData$TotalRedCards)] <- 0
+
+# Calculate bookings per match
+refereeData$BookingsPerMatch <- round(refereeData$TotalCards / refereeData$MatchesOfficiated,1)
+
+# Print the refereeData data frame
+head(refereeData)
+```
+
+```{r fig.align="center",fig.width = 15}
+ggplot(data = refereeData%>%filter(MatchesOfficiated > 10), aes(x = Referee,y = BookingsPerMatch)) +
+    geom_bar(stat='identity', fill = "blue", alpha = 0.7)
+```
+Among referees who have refereed more than 10 matches in the premier league, P Bankes and D Coote effected the most bookings per match.
+
+```{r}
+# Find the referee with the most bookings
+referee_with_most_bookings <- refereeData[which.max(refereeData$TotalCards), ]
+# Print the referee with the most bookings
+print(referee_with_most_bookings)
+```
+Craig Pawson was the referee with the single most bookings in the 2021-22 season, dishing out 107 yellow cards and 2 red cards over the season to players at an average of 4.2 bookings per match.
+
+### Team Play Records
+
+#### Calculate the points data for all teams
+```{r}
+# Create a new column for points earned by each team
+# The teams get 3 points for a win and 1 point for a draw. 
+# Whether the teams play at home or away from home does not matter.
+premData$HomePoints <- ifelse(premData$FTR == "H", 3, ifelse(premData$FTR == "D", 1, 0))
+premData$AwayPoints <- ifelse(premData$FTR == "A", 3, ifelse(premData$FTR == "D", 1, 0))
+
+# Group by home team and sum the points to get the total points for each team
+team_points_home <- premData %>%
+  group_by(Team = HomeTeam) %>%
+  summarise(TotalPoints = sum(HomePoints))
+
+# Group by away team and sum the points to get the total points for each team
+team_points_away <- premData %>%
+  group_by(Team = AwayTeam) %>%
+  summarise(TotalPoints = sum(AwayPoints))
+
+# Combine the home and away points for each team
+team_points <- full_join(team_points_home, team_points_away, by = "Team", suffix = c("_Home", "_Away"))
+
+# Calculate the total points for each team
+team_points$TotalPoints <- team_points$TotalPoints_Home + team_points$TotalPoints_Away
+# Print the results
+head(team_points)
+```
+
+#### Points Scored by All the Teams
+
+```{r fig.align="center",fig.width = 15}
+ggplot(team_points, aes(Team,TotalPoints)) + 
+  geom_bar(stat='identity', fill = "blue") + 
+  labs(title = "Points Scored by All the Teams",
+       y = "Team", x="Points Scored")+
+  theme_minimal()
+```
+
+#### Wins for teams at Home and Away from home
+
+```{r}
+# Calculate wins for each team
+total_wins <- premData %>%
+  group_by(WinningTeam = case_when(FTR == "H" ~ HomeTeam, FTR == "A" ~ AwayTeam)) %>%
+  summarise(TotalWins = n())
+
+# Calculate wins at home for each team
+home_wins <- premData %>%
+  filter(FTR == "H") %>%
+  group_by(WinningTeam = HomeTeam) %>%
+  summarise(HomeWins = n())
+
+# Calculate wins away for each team
+away_wins <- premData %>%
+  filter(FTR == "A") %>%
+  group_by(WinningTeam = AwayTeam) %>%
+  summarise(AwayWins = n())
+
+# Merge the results with the premTeams data frame
+premTeams <- merge(premTeams, total_wins, by.x = "Team", by.y = "WinningTeam", all.x = TRUE)
+premTeams <- merge(premTeams, home_wins, by.x = "Team", by.y = "WinningTeam", all.x = TRUE)
+premTeams <- merge(premTeams, away_wins, by.x = "Team", by.y = "WinningTeam", all.x = TRUE)
+
+# If there are teams that didn't win any matches, replace NAs with 0
+premTeams$TotalWins[is.na(premTeams$TotalWins)] <- 0
+premTeams$HomeWins[is.na(premTeams$HomeWins)] <- 0
+premTeams$AwayWins[is.na(premTeams$AwayWins)] <- 0
+
+# Add the total points column to premTeams
+premTeams$TotalPoints <- team_points$TotalPoints
+
+# Print the updated premTeams data frame
+head(premTeams)
+```
+
+#### Home Form
+
+The championship is decided by the team that is the best at winning. If not winning, teams aim for a draw.   
+Teams are bolstered by fan support at home games, making it crucial for teams to make most of the home atmosphere.  
+The same cannot be said for the games teams play away from home.    
+A template that has often been used by teams is to win every game at home and play and make the best of circumstances away from home.   
+So naturally, it is crucial to win games at home.   
+Let's see how the best teams fared playing at home and away from home.  
+```{r fig.align="center",fig.width = 10}
+ggplot(premTeams, aes(HomeWins,TotalPoints, color=Team)) + 
+  geom_point(size = 2) + 
+  labs(title = "Points Scored vs Home Wins",
+       y = "Points", x="Home Wins")
+```
+A general trend is observed as the teams with the most points have the best record at home.   
+We can see that 4 out of the top 5 teams in the league in the season have made their homes fortresses by winning at least 13 out of their 19 home games.   
+The top 2 teams in the league, Man City and Liverpool had the best record at home winning 15/19 games at home!   
+The one exception to this were Chelsea who won only 9 home games, while finishing 3rd in the league.
+
+
+#### Away Form
+```{r fig.align="center",fig.width = 10}
+ggplot(premTeams, aes(AwayWins,TotalPoints, color=Team)) + 
+  geom_point(size = 2) + 
+  labs(title = "Points Scored vs Wins Away from Home",
+       y = "Points", x="Away Wins")
+```
+While winning games at home is a given, the best teams overcome all difficulties and win in adverse conditions away from home as well.    
+It is noticeable that the top 2 in the league rather unsurprisingly had the best records away from home as well.    
+We can clearly see that the top 5 teams in the league are all teams that have won the most in difficult conditions away from home.    
+While Liverpool and Man City had the same number of wins at home, we can see that Liverpool had just one away win lesser than Man City. That decided the fate of the title.
+
+#### Home and Away Goals
+```{r}
+# Calculate Home Goals
+home_goals <- premData %>%
+  group_by(HomeTeam) %>%
+  summarise(HomeGoals = sum(FTHG))
+
+# Calculate Away Goals
+away_goals <- premData %>%
+  group_by(AwayTeam) %>%
+  summarise(AwayGoals = sum(FTAG))
+
+# Merge the two data frames based on the team names
+premTeams <- merge(premTeams, home_goals, by.x = "Team", by.y = "HomeTeam", all.x = TRUE)
+premTeams <- merge(premTeams, away_goals, by.x = "Team", by.y = "AwayTeam", all.x = TRUE)
+# Add total Goals scored.
+premTeams$TotalGoals <- premTeams$HomeGoals + premTeams$AwayGoals
+
+# Calculate goals conceded for each team
+goals_conceded_home <- premData %>%
+  group_by(Team = HomeTeam) %>%
+  summarise(GoalsConceded = sum(FTAG))
+
+goals_conceded_away <- premData %>%
+  group_by(Team = AwayTeam) %>%
+  summarise(GoalsConceded = sum(FTHG))
+
+# Combine the goals conceded at home and away for each team
+goals_conceded <- full_join(goals_conceded_home, goals_conceded_away, by = "Team", suffix = c("_Home", "_Away"))
+
+# Calculate the total goals conceded for each team
+goals_conceded$totalGoalsConceded <- goals_conceded$GoalsConceded_Home + goals_conceded$GoalsConceded_Away
+
+# Merge the total goals conceded column into the premTeams data frame
+premTeams <- merge(premTeams, goals_conceded[, c("Team", "totalGoalsConceded")], by = "Team", all.x = TRUE)
+
+# Print the result
+head(premTeams)
+```
+Visual representation of the total goals conceded against scored for each team
+```{r fig.align="center",fig.width = 10}
+ggplot(premTeams, aes(TotalGoals,totalGoalsConceded, color=Team)) + 
+  geom_point(size = 2) + 
+  labs(title = "Points Scored vs Wins Away from Home",
+       y = "Goals Conceded", x="Goals Scored") +
+  geom_hline(yintercept=mean(premTeams$TotalGoals), linetype="dotted",color = "red")+ 
+  geom_vline(xintercept = mean(premTeams$totalGoalsConceded), linetype="dotted", 
+                color = "blue")
+```
+The above scatter plot displays the goals scored by a team vs the goals conceded.  
+The dotted line show the league average for the number of goals scored and conceded.  
+The bottom left quadrant shows the teams that were defensively strong but lacked any firepower up top.  
+The top left quadrant shows the teams that were very poor, both in defense and in offence.  
+The teams in the top right quadrants were the teams that scored enough goals but couldn't prevent goals from going into their own net as well.  
+The bottom right quadrant showcases the teams that were among the best in both departments, offence and defense.  
+The best teams concede the least amount of goals and score the most goals.  
+The 5 best teams according to the scatter plot were Man City, Liverpool, Chelsea, Tottenham, Arsenal. That is the the order in which they finished the season as well, showcasing how important it is to have a well rounded team.  
+The team that finished next in the league that year, Man United are outliers in this case. We can see them in the top right quadrant, having scored 57 and conceded 57 goals. This demonstrates that if you do not have a well rounded team, you can only go so far.
